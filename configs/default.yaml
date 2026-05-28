@@ -1,0 +1,38 @@
+dataset:
+  name: mouse_dataset
+  root: dataset/mouse_dataset
+  metadata_excel: PAS染色標本_まとめ.xlsx
+  positive_dir: diabetes
+  negative_dir: not-diabetes
+  id_parse:
+    source: parent_dir_then_filename
+    pattern: leading_integer
+    on_failure: error
+
+metadata:
+  mouse_id_column: sample_number
+  label_column: diabetes(A/WT)
+  age_column: age
+  kidney_number_column: kidney_number
+  output_csv: outputs/metadata.csv
+  label_mapping:
+    A: diabetes
+    WT: not-diabetes
+
+features:
+  model_name: dinov2_vits14
+  output_npz: outputs/features_dinov2.npz
+  feature_type: cls
+  image_size: 224
+  batch_size: 32
+
+experiment:
+  output_dir: outputs
+  seed: 42
+  cluster_counts: [4, 8, 16, 32]
+  train_without_labels: true
+
+iic:
+  epochs: 20
+  batch_size: 32
+  lr: 0.001
