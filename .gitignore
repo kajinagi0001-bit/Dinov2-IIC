@@ -3,7 +3,10 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+dataset/
 outputs/
+wandb/
+src/*.egg-info/
 *.npz
 *.pt
 *.pth

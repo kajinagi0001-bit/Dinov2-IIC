@@ -53,7 +53,13 @@ def run_kmeans(
     assignments_path = output_dir / "assignments.csv"
     assignments.to_csv(assignments_path, index=False, encoding="utf-8-sig")
 
-    metrics = _cluster_metrics(scaled, cluster_id, silhouette_score, davies_bouldin_score)
+    metrics = _cluster_metrics(
+        scaled,
+        cluster_id,
+        silhouette_score,
+        davies_bouldin_score,
+        seed=seed,
+    )
     (output_dir / "metrics.csv").write_text(
         pd.DataFrame([metrics]).to_csv(index=False),
         encoding="utf-8",
@@ -88,15 +94,31 @@ def export_cluster_images(
         _write_thumbnail_html(exported_rows, cluster_dir / "thumbnails.html")
 
 
-def _cluster_metrics(features, cluster_id, silhouette_score, davies_bouldin_score) -> dict:
+def _cluster_metrics(
+    features,
+    cluster_id,
+    silhouette_score,
+    davies_bouldin_score,
+    seed: int,
+) -> dict:
     metrics = {
         "n_images": int(features.shape[0]),
         "n_clusters": int(len(set(cluster_id))),
     }
     if len(set(cluster_id)) > 1 and features.shape[0] > len(set(cluster_id)):
-        metrics["silhouette_score"] = float(silhouette_score(features, cluster_id))
+        sample_size = min(5000, int(features.shape[0]))
+        metrics["silhouette_sample_size"] = sample_size
+        metrics["silhouette_score"] = float(
+            silhouette_score(
+                features,
+                cluster_id,
+                sample_size=sample_size,
+                random_state=seed,
+            )
+        )
         metrics["davies_bouldin_index"] = float(davies_bouldin_score(features, cluster_id))
     else:
+        metrics["silhouette_sample_size"] = np.nan
         metrics["silhouette_score"] = np.nan
         metrics["davies_bouldin_index"] = np.nan
     return metrics

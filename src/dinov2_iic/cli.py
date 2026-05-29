@@ -9,6 +9,7 @@ from .clustering import run_kmeans
 from .config import load_config
 from .features import extract_features
 from .iic import assign_iic, train_iic
+from .inspection import inspect_metadata
 from .metadata import build_metadata, save_metadata
 from .visualization import create_iic_occlusion_visualizations, create_placeholder_visualizations
 
@@ -20,6 +21,11 @@ def main(argv: list[str] | None = None) -> None:
 
     p = subparsers.add_parser("prepare-metadata", help="Scan dataset and create metadata.csv")
     p.add_argument("--output", default=None)
+
+    p = subparsers.add_parser("inspect-metadata", help="Summarize and visualize metadata.csv")
+    p.add_argument("--metadata", default=None)
+    p.add_argument("--output-dir", default=None)
+    p.add_argument("--top-mice", type=int, default=30)
 
     p = subparsers.add_parser("extract-features", help="Extract frozen DINOv2 features")
     p.add_argument("--metadata", default=None)
@@ -48,6 +54,15 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--model-name", default=None)
     p.add_argument("--image-size", type=int, default=None)
     p.add_argument("--device", default=None)
+    p.add_argument("--seed", type=int, default=None)
+    p.add_argument("--representative-count", type=int, default=30)
+    p.add_argument("--no-copy-images", action="store_true")
+    p.add_argument("--no-assign-after-train", action="store_true")
+    p.add_argument("--wandb-project", default=None)
+    p.add_argument("--wandb-entity", default=None)
+    p.add_argument("--wandb-run-name", default=None)
+    p.add_argument("--wandb-mode", choices=["disabled", "online", "offline"], default="disabled")
+    p.add_argument("--wandb-tags", default=None, help="Comma-separated W&B tags")
 
     p = subparsers.add_parser("assign-iic", help="Assign images with a trained IIC head")
     p.add_argument("--metadata", default=None)
@@ -86,6 +101,13 @@ def main(argv: list[str] | None = None) -> None:
         df = build_metadata(cfg)
         save_metadata(df, output)
         print(f"Saved metadata: {output} ({len(df)} images)")
+        return
+
+    if args.command == "inspect-metadata":
+        metadata = args.metadata or _path(cfg, "metadata.output_csv", "outputs/metadata.csv")
+        output_dir = Path(args.output_dir or Path(metadata).parent / "metadata_inspection")
+        inspect_metadata(metadata_csv=metadata, output_dir=output_dir, top_mice=args.top_mice)
+        print(f"Saved metadata inspection: {output_dir}")
         return
 
     if args.command == "extract-features":
@@ -136,6 +158,15 @@ def main(argv: list[str] | None = None) -> None:
             model_name=args.model_name or cfg.get("features", {}).get("model_name", "dinov2_vits14"),
             image_size=args.image_size or cfg.get("features", {}).get("image_size", 224),
             device=args.device,
+            seed=args.seed or cfg.get("experiment", {}).get("seed", 42),
+            assign_after_train=not args.no_assign_after_train,
+            copy_images=not args.no_copy_images,
+            representative_count=args.representative_count,
+            wandb_project=args.wandb_project,
+            wandb_entity=args.wandb_entity,
+            wandb_run_name=args.wandb_run_name,
+            wandb_mode=args.wandb_mode,
+            wandb_tags=_split_csv(args.wandb_tags),
         )
         _copy_config(args.config, output_dir)
         print(f"Saved IIC model outputs: {output_dir}")
@@ -227,6 +258,12 @@ def _timestamped_name(prefix: str) -> str:
 def _copy_config(config_path: str, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(config_path, output_dir / "config.yaml")
+
+
+def _split_csv(value: str | None) -> list[str] | None:
+    if not value:
+        return None
+    return [part.strip() for part in value.split(",") if part.strip()]
 
 
 if __name__ == "__main__":

@@ -1,9 +1,9 @@
 dataset:
-  name: mouse_dataset
-  root: dataset/mouse_dataset
+  name: rat_PAS_crop_longside_1.3
+  root: dataset/rat_PAS_crop_longside_1.3
   metadata_excel: PAS染色標本_まとめ.xlsx
   positive_dir: diabetes
-  negative_dir: not-diabetes
+  negative_dir: not_diabetes
   id_parse:
     source: parent_dir_then_filename
     pattern: leading_integer
