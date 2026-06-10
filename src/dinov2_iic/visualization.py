@@ -64,6 +64,7 @@ def create_iic_occlusion_visualizations(
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     assignments = pd.read_csv(assignments_csv)
     checkpoint = torch.load(checkpoint_path, map_location=device)
+    feature_type = checkpoint.get("feature_type", "cls")
     encoder = torch.hub.load("facebookresearch/dinov2", checkpoint["model_name"])
     encoder.eval().to(device)
     head = ClusterHead(checkpoint["feature_dim"], checkpoint["n_clusters"]).to(device)
@@ -101,6 +102,7 @@ def create_iic_occlusion_visualizations(
                 tensor=tensor,
                 target_cluster=int(row["cluster_id"]),
                 grid_size=grid_size,
+                feature_type=feature_type,
             )
             stem = f"mouse{int(row['mouse_id']):03d}_{src.stem}"
             image.save(cluster_dir / f"{stem}_original.jpg", quality=95)
@@ -137,11 +139,19 @@ def _draw_banner(image: Image.Image, row: pd.Series) -> Image.Image:
     return out
 
 
-def _occlusion_heatmap(torch, encoder, head, tensor, target_cluster: int, grid_size: int) -> np.ndarray:
+def _occlusion_heatmap(
+    torch,
+    encoder,
+    head,
+    tensor,
+    target_cluster: int,
+    grid_size: int,
+    feature_type: str = "cls",
+) -> np.ndarray:
     from .iic import _dinov2_forward
 
     with torch.no_grad():
-        base_prob = torch.softmax(head(_dinov2_forward(torch, encoder, tensor)), dim=1)[
+        base_prob = torch.softmax(head(_dinov2_forward(torch, encoder, tensor, feature_type)), dim=1)[
             0, target_cluster
         ]
     _, _, height, width = tensor.shape
@@ -162,7 +172,7 @@ def _occlusion_heatmap(torch, encoder, head, tensor, target_cluster: int, grid_s
             coords.append((gy, gx))
     batch = torch.cat(occluded_batches, dim=0)
     with torch.no_grad():
-        probs = torch.softmax(head(_dinov2_forward(torch, encoder, batch)), dim=1)[
+        probs = torch.softmax(head(_dinov2_forward(torch, encoder, batch, feature_type)), dim=1)[
             :, target_cluster
         ]
     drops = (base_prob - probs).detach().cpu().numpy()

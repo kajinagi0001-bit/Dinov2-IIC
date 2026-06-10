@@ -11,6 +11,7 @@ from .features import extract_features
 from .iic import assign_iic, train_iic
 from .inspection import inspect_metadata
 from .metadata import build_metadata, save_metadata
+from .umap_vis import create_umap_visualization
 from .visualization import create_iic_occlusion_visualizations, create_placeholder_visualizations
 
 
@@ -53,6 +54,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--lr", type=float, default=None)
     p.add_argument("--model-name", default=None)
     p.add_argument("--image-size", type=int, default=None)
+    p.add_argument("--feature-type", default=None, choices=["cls", "patch_mean", "cls_patch_mean"])
     p.add_argument("--device", default=None)
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--representative-count", type=int, default=30)
@@ -70,6 +72,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--output-dir", default=None)
     p.add_argument("--batch-size", type=int, default=None)
     p.add_argument("--image-size", type=int, default=None)
+    p.add_argument("--feature-type", default=None, choices=["cls", "patch_mean", "cls_patch_mean"])
     p.add_argument("--device", default=None)
     p.add_argument("--representative-count", type=int, default=30)
     p.add_argument("--no-copy-images", action="store_true")
@@ -78,6 +81,19 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--assignments", required=True)
     p.add_argument("--output-dir", default=None)
     p.add_argument("--per-cluster", type=int, default=20)
+
+    p = subparsers.add_parser("visualize-umap", help="Create UMAP feature-space maps")
+    p.add_argument("--features", required=True)
+    p.add_argument("--metadata", default=None)
+    p.add_argument("--assignments", default=None)
+    p.add_argument("--output-dir", default=None)
+    p.add_argument("--n-neighbors", type=int, default=30)
+    p.add_argument("--min-dist", type=float, default=0.05)
+    p.add_argument("--metric", default="cosine")
+    p.add_argument("--seed", type=int, default=None)
+    p.add_argument("--width", type=int, default=1800)
+    p.add_argument("--height", type=int, default=1400)
+    p.add_argument("--point-radius", type=int, default=4)
 
     p = subparsers.add_parser("visualize-iic", help="Create occlusion attribution maps for IIC")
     p.add_argument("--assignments", required=True)
@@ -157,6 +173,7 @@ def main(argv: list[str] | None = None) -> None:
             lr=args.lr or iic_cfg.get("lr", 1e-3),
             model_name=args.model_name or cfg.get("features", {}).get("model_name", "dinov2_vits14"),
             image_size=args.image_size or cfg.get("features", {}).get("image_size", 224),
+            feature_type=args.feature_type or cfg.get("features", {}).get("feature_type", "cls"),
             device=args.device,
             seed=args.seed or cfg.get("experiment", {}).get("seed", 42),
             assign_after_train=not args.no_assign_after_train,
@@ -181,6 +198,7 @@ def main(argv: list[str] | None = None) -> None:
             output_dir=output_dir,
             batch_size=args.batch_size or cfg.get("iic", {}).get("batch_size", 32),
             image_size=args.image_size or cfg.get("features", {}).get("image_size", 224),
+            feature_type=args.feature_type,
             device=args.device,
             copy_images=not args.no_copy_images,
             representative_count=args.representative_count,
@@ -193,6 +211,25 @@ def main(argv: list[str] | None = None) -> None:
         output_dir = Path(args.output_dir or Path(args.assignments).parent / "visualizations")
         create_placeholder_visualizations(args.assignments, output_dir, args.per_cluster)
         print(f"Saved visualizations: {output_dir}")
+        return
+
+    if args.command == "visualize-umap":
+        metadata = args.metadata or _path(cfg, "metadata.output_csv", "outputs/metadata.csv")
+        output_dir = Path(args.output_dir or Path(args.features).parent / "umap")
+        create_umap_visualization(
+            features_npz=args.features,
+            metadata_csv=metadata,
+            assignments_csv=args.assignments,
+            output_dir=output_dir,
+            n_neighbors=args.n_neighbors,
+            min_dist=args.min_dist,
+            metric=args.metric,
+            seed=args.seed or cfg.get("experiment", {}).get("seed", 42),
+            width=args.width,
+            height=args.height,
+            point_radius=args.point_radius,
+        )
+        print(f"Saved UMAP visualization: {output_dir}")
         return
 
     if args.command == "visualize-iic":

@@ -18,6 +18,7 @@ def train_iic(
     lr: float = 1e-3,
     model_name: str = "dinov2_vits14",
     image_size: int = 224,
+    feature_type: str = "cls",
     device: str | None = None,
     seed: int = 42,
     assign_after_train: bool = True,
@@ -58,6 +59,7 @@ def train_iic(
         "lr": float(lr),
         "model_name": model_name,
         "image_size": int(image_size),
+        "feature_type": feature_type,
         "device": device,
         "seed": int(seed),
         "assign_after_train": bool(assign_after_train),
@@ -106,7 +108,7 @@ def train_iic(
     for param in encoder.parameters():
         param.requires_grad_(False)
 
-    feature_dim = _infer_feature_dim(torch, encoder, device, image_size)
+    feature_dim = _infer_feature_dim(torch, encoder, device, image_size, feature_type)
     head = ClusterHead(feature_dim, n_clusters).to(device)
     optimizer = torch.optim.AdamW(head.parameters(), lr=lr, weight_decay=1e-4)
     generator = torch.Generator()
@@ -132,8 +134,8 @@ def train_iic(
             view_a = view_a.to(device)
             view_b = view_b.to(device)
             with torch.no_grad():
-                feat_a = _dinov2_forward(torch, encoder, view_a)
-                feat_b = _dinov2_forward(torch, encoder, view_b)
+                feat_a = _dinov2_forward(torch, encoder, view_a, feature_type)
+                feat_b = _dinov2_forward(torch, encoder, view_b, feature_type)
             prob_a = torch.softmax(head(feat_a), dim=1)
             prob_b = torch.softmax(head(feat_b), dim=1)
             loss = iic_loss(prob_a, prob_b)
@@ -194,6 +196,7 @@ def train_iic(
             "model_name": model_name,
             "n_clusters": n_clusters,
             "feature_dim": feature_dim,
+            "feature_type": feature_type,
             "image_size": image_size,
             "seed": seed,
             "head_state_dict": head.state_dict(),
@@ -214,6 +217,7 @@ def train_iic(
             output_dir=output_dir,
             batch_size=batch_size,
             image_size=image_size,
+            feature_type=feature_type,
             device=device,
             copy_images=copy_images,
             representative_count=representative_count,
@@ -241,6 +245,7 @@ def assign_iic(
     output_dir: str | Path,
     batch_size: int = 32,
     image_size: int = 224,
+    feature_type: str | None = None,
     device: str | None = None,
     copy_images: bool = True,
     representative_count: int = 30,
@@ -261,6 +266,7 @@ def assign_iic(
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     metadata = pd.read_csv(metadata_csv)
     checkpoint = torch.load(checkpoint_path, map_location=device)
+    feature_type = feature_type or checkpoint.get("feature_type", "cls")
     encoder = torch.hub.load("facebookresearch/dinov2", checkpoint["model_name"])
     encoder.eval().to(device)
     head = ClusterHead(checkpoint["feature_dim"], checkpoint["n_clusters"]).to(device)
@@ -296,7 +302,7 @@ def assign_iic(
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(device)
-            features = _dinov2_forward(torch, encoder, batch)
+            features = _dinov2_forward(torch, encoder, batch, feature_type)
             probs = torch.softmax(head(features), dim=1)
             all_probs.append(probs.cpu().numpy())
     probs_np = np.concatenate(all_probs, axis=0) if all_probs else np.empty((0, 0))
@@ -354,18 +360,26 @@ def _set_seed(seed: int, torch) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def _infer_feature_dim(torch, encoder, device: str, image_size: int) -> int:
+def _infer_feature_dim(torch, encoder, device: str, image_size: int, feature_type: str) -> int:
     dummy = torch.zeros(2, 3, image_size, image_size, device=device)
     with torch.no_grad():
-        feat = _dinov2_forward(torch, encoder, dummy)
+        feat = _dinov2_forward(torch, encoder, dummy, feature_type)
     return int(feat.shape[1])
 
 
-def _dinov2_forward(torch, encoder, batch):
+def _dinov2_forward(torch, encoder, batch, feature_type: str = "cls"):
     if hasattr(encoder, "forward_features"):
         out = encoder.forward_features(batch)
-        if isinstance(out, dict) and "x_norm_clstoken" in out:
-            return out["x_norm_clstoken"]
+        if isinstance(out, dict):
+            if feature_type == "patch_mean" and "x_norm_patchtokens" in out:
+                return out["x_norm_patchtokens"].mean(dim=1)
+            if feature_type == "cls_patch_mean" and "x_norm_patchtokens" in out:
+                return torch.cat(
+                    [out["x_norm_clstoken"], out["x_norm_patchtokens"].mean(dim=1)],
+                    dim=1,
+                )
+            if "x_norm_clstoken" in out:
+                return out["x_norm_clstoken"]
     out = encoder(batch)
     if out.ndim > 2:
         out = out.flatten(1)

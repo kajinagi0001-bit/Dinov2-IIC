@@ -573,6 +573,333 @@ dinov2-iic --config configs/default.yaml train-iic `
   --wandb-run-name iic_full_k16_e20
 ```
 
+## 14. 2026-05-29/30 全量IIC K=16 baseline
+
+方針:
+
+- 今後の基本クラスタ数は `K=16` とする。
+- `K=16` は病理レビューと下流分析で扱いやすい粒度を優先した基本値。
+- 微細な形態差は、将来的に overclustering head または `K=32` 以上の補助実験で吸収する。
+- 本実験は `K=16` baseline として扱う。
+
+実行コマンド:
+
+```powershell
+dinov2-iic --config configs/default.yaml train-iic `
+  --metadata outputs/metadata.csv `
+  --output-dir outputs/iic_full_k16_e20_wandb `
+  --n-clusters 16 `
+  --epochs 20 `
+  --batch-size 128 `
+  --device cuda:0 `
+  --seed 42 `
+  --no-copy-images `
+  --wandb-project dinov2-iic `
+  --wandb-mode online `
+  --wandb-run-name iic_full_k16_e20 `
+  --wandb-tags iic,full,k16,baseline
+```
+
+W&B:
+
+- `https://wandb.ai/kajinagi0601-kanazawa-university/dinov2-iic/runs/ymg9cmnr`
+
+実行時間:
+
+- start: 2026-05-29 12:54:33
+- end: 2026-05-30 00:27:18
+- 約11時間33分
+
+出力:
+
+- `outputs/iic_full_k16_e20_wandb/iic_head.pt`
+- `outputs/iic_full_k16_e20_wandb/train_log.csv`
+- `outputs/iic_full_k16_e20_wandb/cluster_usage_by_epoch.csv`
+- `outputs/iic_full_k16_e20_wandb/run_config.json`
+- `outputs/iic_full_k16_e20_wandb/training_report.md`
+- `outputs/iic_full_k16_e20_wandb/assignments.csv`
+- `outputs/iic_full_k16_e20_wandb/cluster_summary.csv`
+- `outputs/iic_full_k16_e20_wandb/analysis_report.md`
+- `outputs/iic_full_k16_e20_wandb/clusters`
+- `outputs/iic_full_k16_e20_wandb/candidate_clusters.csv`
+- `outputs/iic_full_k16_e20_wandb/candidate_clusters.md`
+
+学習ログ最終値:
+
+- final loss: `-1.6119`
+- training used clusters: `16 / 16`
+- final assignment used clusters: `16 / 16`
+- final max cluster fraction: `0.1447`
+- final max diabetes ratio: `0.8083`
+- final min diabetes ratio: `0.2383`
+- collapse warning: `False`
+
+主要クラスタ:
+
+| direction | cluster | images | mice | diabetes_ratio | thumbnail |
+|---|---:|---:|---:|---:|---|
+| diabetes_enriched | 05 | 4,388 | 213 | 0.808 | `outputs/iic_full_k16_e20_wandb/clusters/cluster_05/thumbnails.html` |
+| diabetes_enriched | 08 | 5,902 | 215 | 0.796 | `outputs/iic_full_k16_e20_wandb/clusters/cluster_08/thumbnails.html` |
+| diabetes_enriched | 12 | 4,985 | 206 | 0.765 | `outputs/iic_full_k16_e20_wandb/clusters/cluster_12/thumbnails.html` |
+| diabetes_enriched | 13 | 4,756 | 200 | 0.735 | `outputs/iic_full_k16_e20_wandb/clusters/cluster_13/thumbnails.html` |
+| diabetes_enriched | 11 | 3,856 | 213 | 0.709 | `outputs/iic_full_k16_e20_wandb/clusters/cluster_11/thumbnails.html` |
+| not_diabetes_enriched | 09 | 3,365 | 202 | 0.238 | `outputs/iic_full_k16_e20_wandb/clusters/cluster_09/thumbnails.html` |
+| not_diabetes_enriched | 00 | 3,715 | 199 | 0.270 | `outputs/iic_full_k16_e20_wandb/clusters/cluster_00/thumbnails.html` |
+| not_diabetes_enriched | 07 | 3,309 | 187 | 0.293 | `outputs/iic_full_k16_e20_wandb/clusters/cluster_07/thumbnails.html` |
+
+所見:
+
+- 全量IICは崩壊せず、16クラスタすべてを使用した。
+- 最大クラスタは全体の14.5%で、過度な一極集中はない。
+- 糖尿病寄りクラスタは `cluster_05`, `08`, `12`, `13`, `11` が候補。
+- 非糖尿病寄りクラスタは `cluster_09`, `00`, `07` が候補。
+- k-meansの `K=16` / `K=32` と同様に、糖尿病寄り・非糖尿病寄りの偏りが再現した。
+- IICは平均確信度が高く、entropyが低い。代表画像レビューでは、中心例だけでなく境界例も別途確認した方がよい。
+
+次の推奨:
+
+1. `candidate_clusters.md` から各クラスタの代表画像をレビューする。
+2. `cluster_05`, `08`, `12`, `13`, `11` の糖尿病寄り形態テーマを整理する。
+3. `cluster_09`, `00`, `07` の非糖尿病寄り形態テーマを整理する。
+4. IIC K=16の高確信度例・境界例・個体別比率を、k-meansで作ったレビュー用集計と同じ形式で作る。
+5. その後、overclustering方針として `K=32` 補助headまたは別runを検討する。
+
+## 15. 2026-05-30 UMAPとIIC判断根拠可視化
+
+方針:
+
+- 全体構造は UMAP で確認する。
+- 判断根拠可視化は Grad-CAM を第一候補にせず、ViT/DINOv2でも解釈しやすい occlusion sensitivity を先に使う。
+- Grad-CAM系は後続の比較用可視化として扱う。
+
+追加実装:
+
+- `src/dinov2_iic/umap_vis.py`
+- `dinov2-iic visualize-umap`
+- `requirements.txt` と `pyproject.toml` に `umap-learn>=0.5` を追加。
+
+UMAP実行:
+
+```powershell
+dinov2-iic --config configs/default.yaml visualize-umap `
+  --features outputs/features_dinov2_cls_full.npz `
+  --metadata outputs/metadata.csv `
+  --assignments outputs/iic_full_k16_e20_wandb/assignments.csv `
+  --output-dir outputs/iic_full_k16_e20_wandb/umap_cls `
+  --n-neighbors 30 `
+  --min-dist 0.05 `
+  --metric cosine `
+  --seed 42
+```
+
+UMAP出力:
+
+- `outputs/iic_full_k16_e20_wandb/umap_cls/umap.html`
+- `outputs/iic_full_k16_e20_wandb/umap_cls/umap_coordinates.csv`
+- `outputs/iic_full_k16_e20_wandb/umap_cls/umap_by_iic_cluster.png`
+- `outputs/iic_full_k16_e20_wandb/umap_cls/umap_by_label.png`
+- `outputs/iic_full_k16_e20_wandb/umap_cls/umap_by_age.png`
+- `outputs/iic_full_k16_e20_wandb/umap_cls/umap_summary.md`
+
+Occlusion実行:
+
+```powershell
+dinov2-iic --config configs/default.yaml visualize-iic `
+  --assignments outputs/iic_full_k16_e20_wandb/assignments.csv `
+  --checkpoint outputs/iic_full_k16_e20_wandb/iic_head.pt `
+  --output-dir outputs/iic_full_k16_e20_wandb/occlusion_representatives `
+  --per-cluster 1 `
+  --grid-size 7 `
+  --image-size 224 `
+  --device cuda:0
+```
+
+Occlusion出力:
+
+- `outputs/iic_full_k16_e20_wandb/occlusion_representatives/README.md`
+- `outputs/iic_full_k16_e20_wandb/occlusion_representatives/cluster_XX/*_original.jpg`
+- `outputs/iic_full_k16_e20_wandb/occlusion_representatives/cluster_XX/*_heatmap.jpg`
+- `outputs/iic_full_k16_e20_wandb/occlusion_representatives/cluster_XX/*_overlay.jpg`
+
+結果:
+
+- UMAPは全76,347画像で作成完了。
+- UMAPはDINOv2 CLS特徴を使用し、IIC K=16クラスタ、糖尿病ラベル、週齢で色分けした。
+- Occlusionは16クラスタそれぞれ1代表画像のみで作成完了。
+- Occlusion出力は16 cluster directories、合計48画像ファイル。
+
+注意:
+
+- Occlusion heatmap は「この領域を隠すと対象クラスタ確率が下がる」という感度マップであり、病理学的根拠を断定するものではない。
+- 代表画像は現在 `cluster_probability` が高い順で選ばれている。高確信度代表としては妥当だが、同一個体に寄る場合があるため、レビューで気になる場合は個体分散を考慮した代表選択も追加する。
+
+## 16. 2026-05-30 UMAP再生成と特徴表現の整理
+
+訂正:
+
+- 全量IIC `K=16` 本番実験は patch token ではなく、DINOv2の `CLS token` を使って学習している。
+- そのため、IIC K=16クラスタ割当と直接対応するUMAPは `outputs/features_dinov2_cls_full.npz` を使った `CLS特徴UMAP`。
+- 一方で、k-means比較では `patch_mean` が良好だったため、同じIIC K=16割当を `patch_mean` 特徴空間に重ねたUMAPも比較用に作成した。
+
+可読性改善:
+
+- `visualize-umap` に `--point-radius` を追加した。
+- 点半径を `4` にして、UMAP図を再生成した。
+
+CLS特徴UMAP、大きい点:
+
+```powershell
+dinov2-iic --config configs/default.yaml visualize-umap `
+  --features outputs/features_dinov2_cls_full.npz `
+  --metadata outputs/metadata.csv `
+  --assignments outputs/iic_full_k16_e20_wandb/assignments.csv `
+  --output-dir outputs/iic_full_k16_e20_wandb/umap_cls_points4 `
+  --n-neighbors 30 `
+  --min-dist 0.05 `
+  --metric cosine `
+  --seed 42 `
+  --point-radius 4
+```
+
+出力:
+
+- `outputs/iic_full_k16_e20_wandb/umap_cls_points4/umap.html`
+- `outputs/iic_full_k16_e20_wandb/umap_cls_points4/umap_by_iic_cluster.png`
+- `outputs/iic_full_k16_e20_wandb/umap_cls_points4/umap_by_label.png`
+- `outputs/iic_full_k16_e20_wandb/umap_cls_points4/umap_by_age.png`
+- `outputs/iic_full_k16_e20_wandb/umap_cls_points4/umap_coordinates.csv`
+
+patch_mean特徴UMAP、比較用:
+
+```powershell
+dinov2-iic --config configs/default.yaml visualize-umap `
+  --features outputs/features_dinov2_patch_mean_full.npz `
+  --metadata outputs/metadata.csv `
+  --assignments outputs/iic_full_k16_e20_wandb/assignments.csv `
+  --output-dir outputs/iic_full_k16_e20_wandb/umap_patch_mean_points4 `
+  --n-neighbors 30 `
+  --min-dist 0.05 `
+  --metric cosine `
+  --seed 42 `
+  --point-radius 4
+```
+
+出力:
+
+- `outputs/iic_full_k16_e20_wandb/umap_patch_mean_points4/umap.html`
+- `outputs/iic_full_k16_e20_wandb/umap_patch_mean_points4/umap_by_iic_cluster.png`
+- `outputs/iic_full_k16_e20_wandb/umap_patch_mean_points4/umap_by_label.png`
+- `outputs/iic_full_k16_e20_wandb/umap_patch_mean_points4/umap_by_age.png`
+- `outputs/iic_full_k16_e20_wandb/umap_patch_mean_points4/umap_coordinates.csv`
+
+レビュー時の使い分け:
+
+- 主解析: `umap_cls_points4`
+- 比較解析: `umap_patch_mean_points4`
+- `patch_mean` UMAPで同じIICクラスタがまとまって見える場合、クラスタがCLSだけでなく局所patch特徴空間でも支持される可能性が高い。
+
+## 17. 2026-05-30 全量IIC patch_mean K=16
+
+背景:
+
+- 全量IIC `K=16` baselineは DINOv2 `CLS token` で学習した。
+- DINOv2で常にCLS tokenが最良とは限らない。自然画像のグローバル表現ではCLSが有用な一方、病理画像の局所形態差ではpatch token由来の特徴が効く可能性がある。
+- k-means比較では `patch_mean` が指標上やや良かったため、IICでも `patch_mean` を比較実験として実行した。
+
+追加実装:
+
+- `train-iic` と `assign-iic` に `--feature-type cls|patch_mean|cls_patch_mean` を追加。
+- checkpointに `feature_type` を保存。
+- occlusion可視化もcheckpointの `feature_type` を読むようにした。
+- 既存checkpointに `feature_type` がない場合は `cls` として扱うため、過去のCLS実験とは互換。
+
+smoke test:
+
+```powershell
+dinov2-iic --config configs/default.yaml train-iic `
+  --metadata outputs/subsets/metadata_smoke.csv `
+  --output-dir outputs/iic_smoke_patch_mean_k4_e1 `
+  --n-clusters 4 `
+  --epochs 1 `
+  --batch-size 16 `
+  --device cuda:0 `
+  --seed 42 `
+  --feature-type patch_mean `
+  --no-copy-images
+```
+
+smoke testは成功し、`run_config.json` に `feature_type: patch_mean` が保存されることを確認した。
+
+全量実行:
+
+```powershell
+dinov2-iic --config configs/default.yaml train-iic `
+  --metadata outputs/metadata.csv `
+  --output-dir outputs/iic_full_patch_mean_k16_e20_wandb `
+  --n-clusters 16 `
+  --epochs 20 `
+  --batch-size 128 `
+  --device cuda:0 `
+  --seed 42 `
+  --feature-type patch_mean `
+  --no-copy-images `
+  --wandb-project dinov2-iic `
+  --wandb-mode online `
+  --wandb-run-name iic_full_patch_mean_k16_e20 `
+  --wandb-tags iic,full,k16,patch_mean
+```
+
+W&B:
+
+- `https://wandb.ai/kajinagi0601-kanazawa-university/dinov2-iic/runs/4yszym08`
+
+実行時間:
+
+- start: 2026-05-30 01:09:02
+- end: 2026-05-30 12:41:16
+- 約11時間32分
+
+出力:
+
+- `outputs/iic_full_patch_mean_k16_e20_wandb/iic_head.pt`
+- `outputs/iic_full_patch_mean_k16_e20_wandb/train_log.csv`
+- `outputs/iic_full_patch_mean_k16_e20_wandb/cluster_usage_by_epoch.csv`
+- `outputs/iic_full_patch_mean_k16_e20_wandb/run_config.json`
+- `outputs/iic_full_patch_mean_k16_e20_wandb/assignments.csv`
+- `outputs/iic_full_patch_mean_k16_e20_wandb/cluster_summary.csv`
+- `outputs/iic_full_patch_mean_k16_e20_wandb/analysis_report.md`
+- `outputs/iic_full_patch_mean_k16_e20_wandb/clusters`
+- `outputs/iic_full_patch_mean_k16_e20_wandb/candidate_clusters.csv`
+- `outputs/iic_full_patch_mean_k16_e20_wandb/candidate_clusters.md`
+- `outputs/iic_cls_vs_patch_mean_k16_comparison.csv`
+
+結果:
+
+| run | used_clusters | max_cluster_fraction | max_diabetes_ratio | min_diabetes_ratio | mean_entropy_weighted |
+|---|---:|---:|---:|---:|---:|
+| `cls_iic_k16` | 16 | 0.1447 | 0.8083 | 0.2383 | 0.0238 |
+| `patch_mean_iic_k16` | 16 | 0.1464 | 0.7253 | 0.4058 | 0.0225 |
+
+patch_mean IICの主要クラスタ:
+
+| direction | cluster | images | mice | diabetes_ratio | thumbnail |
+|---|---:|---:|---:|---:|---|
+| diabetes_enriched | 14 | 3,957 | 204 | 0.725 | `outputs/iic_full_patch_mean_k16_e20_wandb/clusters/cluster_14/thumbnails.html` |
+| diabetes_enriched | 00 | 6,258 | 216 | 0.686 | `outputs/iic_full_patch_mean_k16_e20_wandb/clusters/cluster_00/thumbnails.html` |
+| diabetes_enriched | 12 | 4,594 | 204 | 0.680 | `outputs/iic_full_patch_mean_k16_e20_wandb/clusters/cluster_12/thumbnails.html` |
+| diabetes_enriched | 03 | 1,759 | 212 | 0.646 | `outputs/iic_full_patch_mean_k16_e20_wandb/clusters/cluster_03/thumbnails.html` |
+| not_diabetes_enriched | 13 | 6,287 | 211 | 0.406 | `outputs/iic_full_patch_mean_k16_e20_wandb/clusters/cluster_13/thumbnails.html` |
+| not_diabetes_enriched | 11 | 3,664 | 208 | 0.432 | `outputs/iic_full_patch_mean_k16_e20_wandb/clusters/cluster_11/thumbnails.html` |
+| not_diabetes_enriched | 15 | 3,374 | 209 | 0.445 | `outputs/iic_full_patch_mean_k16_e20_wandb/clusters/cluster_15/thumbnails.html` |
+
+所見:
+
+- patch_mean IICも崩壊せず、16クラスタすべてを使用した。
+- クラスタサイズの最大比率はCLS版とほぼ同等で、一極集中はない。
+- ただし糖尿病/非糖尿病の偏りはCLS版の方が強い。
+- patch_mean版は、CLS版に比べるとラベル偏りが穏やかで、局所形態差をより平滑に拾っている可能性がある。
+- 病理レビューでは、まずCLS IIC K=16を主解析とし、patch_mean IIC K=16を局所形態差の比較解析として扱うのがよい。
+
 ## 6. 次にコード面で足すとよいもの
 
 優先度の高い改善:
